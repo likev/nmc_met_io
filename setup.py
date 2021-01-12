@@ -17,12 +17,12 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name=name,
-
     version=version,
 
-    description=("Collection of tools for I/O or"
-                 "accessing meteorological data."),
+    description=("Collection of tools for I/O or accessing meteorological data."),
     long_description=long_description,
+    long_description_content_type='text/markdown',
+    url='https://github.com/nmcdev/nmc_met_io',
 
     # author
     author=author,
@@ -32,23 +32,38 @@ setup(
     license='GPL3',
 
     classifiers=[
-      'Development Status :: 3 - Alpha',
+      'Development Status :: 4 - Beta',
       'Intended Audience :: Developers',
+      'Intended Audience :: Science/Research',
+      'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
+      'Topic :: Scientific/Engineering',
+      'Topic :: Scientific/Engineering :: Atmospheric Science',
       'Programming Language :: Python :: 3',
-    ],
+      'Programming Language :: Python :: 3.6',
+      'Programming Language :: Python :: 3.7',
+      'Programming Language :: Python :: 3.8',
+      'Operating System :: POSIX :: Linux',
+      'Operating System :: MacOS :: MacOS X',
+      'Operating System :: Microsoft :: Windows'],
 
-    packages=find_packages(exclude=['docs', 'tests', 'build', 'dist']),
+    python_requires='>=3.6',
+    zip_safe = False,
+    platforms = ["all"],
+
+    packages=find_packages(exclude=[
+      'documents', 'docs', 'examples', 'notebooks', 'tests', 'build', 'dist']),
     include_package_data=True,
     exclude_package_data={'': ['.gitignore']},
 
-    install_requires=['numpy>=1.12.1',
-                      'scipy>=0.19.0',
-                      'xarray>=0.9.6',
-                      'pandas>=0.20.0',
-                      'pyproj>=1.9.5.1',
-                      'protobuf>=3.5.0',
-                      'urllib3>=1.20',
-                      'python-dateutil']
+    install_requires=[
+      'numpy>=1.17.0',
+      'scipy>=1.4.0',
+      'pandas>=1.0.0',
+      'xarray>=0.16.0',
+      'protobuf>=3.12.0',
+      'urllib3>=1.25.9',
+      'tqdm>=4.47.0',
+      'python-dateutil>=2.8.1']
 )
 
 # development mode (DOS command):
@@ -59,5 +74,5 @@ setup(
 #     python setup.py build --build-base=D:/test/python/build
 
 # distribution mode:
-#     python setup.py sdist             # create source tar.gz file in /dist
-#     python setup.py bdist_wheel       # create wheel binary in /dist
+#     python setup.py sdist build              # create source tar.gz file in /dist
+#     twine upload --skip-existing dist/*      # upload package to pypi

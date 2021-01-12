@@ -9,11 +9,15 @@ Retrieve historical data from CIMISS service.
 
 import os
 import calendar
+import time
 import urllib.request
 import numpy as np
+import pandas as pd
+from tqdm import tqdm
 from nmc_met_io.retrieve_cimiss_server import cimiss_obs_by_time_range
 from nmc_met_io.retrieve_cimiss_server import cimiss_obs_in_rect_by_time_range
 from nmc_met_io.retrieve_cimiss_server import cimiss_obs_file_by_time_range
+from nmc_met_io.retrieve_cimiss_server import cimiss_obs_by_time_range_and_id
 
 
 def get_day_hist_obs(years=np.arange(2000, 2011, 1),
@@ -86,6 +90,46 @@ def get_day_hist_obs(years=np.arange(2000, 2011, 1),
     return out_files
 
 
+def get_day_hist_obs_id(years=np.arange(2000, 2011, 1), 
+                        data_code='SURF_CHN_MUL_DAY', 
+                        elements=None, sta_ids="54511"):
+    """
+    Retrieve hitory observations for sta_ids.
+
+    Args:
+        years (np.array, optional): years for historical data. Defaults to np.arange(2000, 2011, 1).
+        data_code (str, optional): dataset code. Defaults to 'SURF_CHN_MUL_DAY'.
+        elements ([type], optional): elements for retrieve, 'ele1, ele2, ...'. Defaults to None.
+        sta_ids (str, optional): station ids. Defaults to "54511".
+
+    Returns:
+        dataframe: station obervation records.
+    """
+    # check elements
+    if elements is None:
+        elements = 'Station_Id_d,Datetime,Lat,Lon,Alti,TEM_Max,TEM_Min,PRE_Time_0808'
+
+    # loop every yeas
+    data_list = []
+    tqdm_years = tqdm(years, desc="Years: ")
+    for year in tqdm_years:
+        start_time = str(year) + '0101000000'
+        end_time = str(year) + '1231000000'
+        time_range = "[" + start_time + "," + end_time + "]"
+        df = cimiss_obs_by_time_range_and_id(
+            time_range, data_code=data_code, elements=elements,
+            sta_ids=sta_ids, trans_type=True)
+        if df is not None:
+            df = df.drop_duplicates()
+            data_list.append(df)
+    
+    # concentrate dataframes
+    if len(data_list) == 0:
+        return None
+    else:
+        return pd.concat(data_list, axis=0, ignore_index=True)
+
+
 def get_mon_hist_obs(years=np.arange(2000, 2011, 1),
                      limit=(3, 73, 54, 136),
                      elements=None,
@@ -139,18 +183,20 @@ def get_mon_hist_obs(years=np.arange(2000, 2011, 1),
     return out_files
 
 
-def get_cmpas_hist_files(time_range, outdir='.'):
+def get_cmpas_hist_files(time_range, outdir='.', resolution=None):
     """
     Download CMAPS QPE gridded data files.
+    注: CIMISS对于下载访问次数进行了访问限制, 最好使用cmadaas_get_obs_files.
     
     Arguments:
         time_range {string} -- time range for retrieve,
                               "[YYYYMMDDHHMISS,YYYYMMDDHHMISS]"
         outdir {string} -- output directory.
+        resolution {string} -- data resolution, 0P01 or 0P05
 
     :Exampels:
     >>> time_range = "[20180101000000,20180331230000]"
-    >>> get_cmpas_hist_files(time_range, outdir='G:/CMAPS')
+    >>> get_cmpas_hist_files(time_range, outdir='G:/CMAPS', resolution='0P05')
     """
 
     # check output directory
@@ -161,6 +207,16 @@ def get_cmpas_hist_files(time_range, outdir='.'):
         time_range, data_code="SURF_CMPA_NRT_NC")
     filenames = files['DS']
     for file in filenames:
+        if resolution is not None:
+            if not resolution in file['FILE_NAME']:
+                continue
         outfile = os.path.join(outdir, file['FILE_NAME'])
         if not os.path.isfile(outfile):
-            urllib.request.urlretrieve(file['FILE_URL'], outfile)
+            # 服务器对短时间内访问次数进行了限制,
+            # 相应策略是出现下载错误时, 等待10秒钟后重新下载
+            try:
+                time.sleep(2)
+                urllib.request.urlretrieve(file['FILE_URL'], outfile)
+            except:
+                time.sleep(60)
+                urllib.request.urlretrieve(file['FILE_URL'], outfile)

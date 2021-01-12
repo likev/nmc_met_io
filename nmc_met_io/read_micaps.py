@@ -11,7 +11,192 @@ import os.path
 import numpy as np
 import xarray as xr
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
+
+
+def read_micaps_1(fname, limit=None):
+    """
+    Read Micaps 1 type fle, the surface observation data.
+
+    注：此类数据用于规范的地面填图,  数据：  
+        区站号（长整数）  经度  纬度  拔海高度（均为浮点数）站点级别（整数）  总云量  风向  风速  
+        海平面气压（或本站气压）  3小时变压  过去天气1  过去天气2  6小时降水 低云状  低云量  低云高  
+        露点  能见度  现在天气  温度 中云状  高云状  标志1  标志2（均为整数） 24小时变温  24小时变压
+    注：
+        缺值时用9999表示，以后相同。
+        站点级别表示站点的放大级别，即只有当图象放大到该级别时此站才被填图。以后相同。
+        当标志1为1，标志2为2时，说明后面有24小时变温变压。否则说明后面没有24小时变温变压。
+
+    Args:
+        fname (str): data filename.
+        limit (list): region limit, [min_lat, min_lon, max_lat, max_lon]
+
+    Returns:
+        pandas DataFrame
+
+    Examples:
+    >>> data = read_micaps_1("Z:/data/surface/plot/19010108.000")
+    """
+
+    # check file exist
+    if not os.path.isfile(fname):
+        return None
+
+    # read contents
+    encodings = ['utf-8', 'gb18030', 'GBK']
+    for encoding in encodings:
+        txt = None
+        try:
+            with open(fname, 'r', encoding=encoding) as f:
+                txt = f.read().replace('\n', ' ').split()
+        except Exception:
+            pass
+    if txt is None:
+        print("Micaps 1 file error: " + fname)
+        return None
+
+    # head information
+    head_info = txt[2]
+
+    # date and time
+    year = int(txt[3]) if len(txt[3]) == 4 else int(txt[3]) + 2000
+    month = int(txt[4])
+    day = int(txt[5])
+    hour = int(txt[6])
+    time = datetime(year, month, day, hour)
+
+    # number of stations
+    number = int(txt[7])
+
+    # set record column names
+    columns = [
+            'ID', 'lon', 'lat', 'alt', 'grade', 'total_cloud_cover', 'wind_angle', 'wind_speed', 
+            'MSLP', 'pressure_3h_trend', 'past_weather_1', 'past_weather_2', 'precipitation_6h',
+            'low_cloud_type', 'low_cloud_cover', 'low_cloud_base', 'dewpoint', 'visibility', 
+            'current_weather', 'temperature', 'middle_cloud_type', 'high_cloud_type', 'flag1', 'flag2']
+
+    # cut the data
+    txt = txt[8:]
+    if (len(txt) % 24) == 0:
+        txt = np.array(txt)
+        txt.shape = [number, 24]
+    else:
+        txt = np.array(txt)
+        txt.shape = [number, 26]
+        columns.extend(['temperature_24h_trend', 'pressure_24h_trend'])
+
+    # initial data
+    data = pd.DataFrame(txt, columns=columns)
+
+    # convert column type
+    for column in data.columns:
+        if column == 'ID':
+            continue
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+        data[column].mask(data[column] ==  9999.0, inplace=True)
+
+    # cut the region
+    if limit is not None:
+        data = data[(limit[0] <= data['lat']) & (data['lat'] <= limit[2]) &
+                    (limit[1] <= data['lon']) & (data['lon'] <= limit[3])]
+
+    # check records
+    if len(data) == 0:
+        return None
+
+    # decode the sea leavl pressure
+    data.loc[data['MSLP'] <= 600, 'MSLP'] = data.loc[data['MSLP'] <= 600, 'MSLP']/10. + 1000.
+    data.loc[data['MSLP'] >  600, 'MSLP'] = data.loc[data['MSLP'] >  600, 'MSLP']/10. +  900.
+
+    # add time
+    data['time'] = time
+
+    # return
+    return data
+
+
+def read_micaps_2(fname, limit=None):
+    """
+    Read Micaps 2 type file (high observation)
+    
+    Args:
+        fname (str): data filename.
+        limit (list): region limit, [min_lat, min_lon, max_lat, max_lon]
+
+    Returns:
+        pandas DataFrame
+
+    Examples:
+    >>> data = read_micaps_2("Z:/data/high/plot/500/19010108.000")
+    """
+
+    # check file exist
+    if not os.path.isfile(fname):
+        return None
+
+    # read contents
+    encodings = ['utf-8', 'gb18030', 'GBK']
+    for encoding in encodings:
+        txt = None
+        try:
+            with open(fname, 'r', encoding=encoding) as f:
+                txt = f.read().replace('\n', ' ').split()
+        except Exception:
+            pass
+    if txt is None:
+        print("Micaps 1 file error: " + fname)
+        return None
+
+    # head information
+    head_info = txt[2]
+
+    # date and time
+    year = int(txt[3]) if len(txt[3]) == 4 else int(txt[3]) + 2000
+    month = int(txt[4])
+    day = int(txt[5])
+    hour = int(txt[6])
+    time = datetime(year, month, day, hour)
+
+    # level
+    level = float(txt[7])
+
+    # number of stations
+    number = int(txt[8])
+
+    # set record column names
+    columns = [
+            'ID', 'lon', 'lat', 'alt', 'grade', 'height', 'temperature', 'dewpoint_depression',
+            'wind_angle', 'wind_speed']
+
+    # cut the data
+    txt = np.array(txt[9:])
+    txt.shape = [number, 10]
+
+    # initial data
+    data = pd.DataFrame(txt, columns=columns)
+
+    # convert column type
+    for column in data.columns:
+        if column == 'ID':
+            continue
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+        data[column].mask(data[column] ==  9999.0, inplace=True)
+
+    # cut the region
+    if limit is not None:
+        data = data[(limit[0] <= data['lat']) & (data['lat'] <= limit[2]) &
+                    (limit[1] <= data['lon']) & (data['lon'] <= limit[3])]
+
+    # check records
+    if len(data) == 0:
+        return None
+
+    # add time
+    data['time'] = time
+    data['level'] = level
+
+    # return
+    return data
 
 
 def read_micaps_3(fname, limit=None):
@@ -50,12 +235,16 @@ def read_micaps_3(fname, limit=None):
         return None
 
     # read contents
-    try:
-        with open(fname, 'r') as f:
-            # txt = f.read().decode('GBK').replace('\n', ' ').split()
-            txt = f.read().replace('\n', ' ').split()
-    except IOError as err:
-        print("Micaps 3 file error: " + str(err))
+    encodings = ['utf-8', 'gb18030', 'GBK']
+    for encoding in encodings:
+        txt = None
+        try:
+            with open(fname, 'r', encoding=encoding) as f:
+                txt = f.read().replace('\n', ' ').split()
+        except Exception:
+            pass
+    if txt is None:
+        print("Micaps 3 file error: " + fname)
         return None
 
     # head information
@@ -103,11 +292,15 @@ def read_micaps_3(fname, limit=None):
 
     # initial data
     columns = list(['ID', 'lon', 'lat', 'alt'])
-    columns.extend(['V%s' % x for x in range(n_elements)])
+    columns.extend(['Var%s' % x for x in range(n_elements)])
     data = pd.DataFrame(txt, columns=columns)
 
     # convert column type
-    data = data.ix[:, 1:].apply(pd.to_numeric)
+    for column in data.columns:
+        if column == 'ID':
+            continue
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+        data[column].mask(data[column] ==  9999.0, inplace=True)
 
     # cut the region
     if limit is not None:
@@ -126,12 +319,17 @@ def read_micaps_3(fname, limit=None):
     return data
 
 
-def read_micaps_4(fname, limit=None):
+def read_micaps_4(fname, limit=None, varname='data', varattrs={'units':''}, scale_off=None,
+                  levattrs={'long_name':'pressure_level', 'units':'hPa', '_CoordinateAxisType':'Pressure'}):
     """
     Read Micaps 4 type file (grid)
 
     :param fname: micaps file name.
     :param limit: region limit, [min_lat, min_lon, max_lat, max_lon]
+    :param varname: set variable name.
+    :param varattrs: set variable attributes, dictionary type.
+    :param scale_off: [scale, offset], return values = values*scale + offset.
+    :param levattrs: set level coordinate attributes, diectionary type.
     :return: data, xarray type
 
     :Examples:
@@ -144,12 +342,16 @@ def read_micaps_4(fname, limit=None):
         return None
 
     # read contents
-    try:
-        with open(fname, encoding='gb18030',  errors='ignore') as f:
-            # txt = f.read().decode('GBK').replace('\n', ' ').split()
-            txt = f.read().replace('\n', ' ').split()
-    except IOError as err:
-        print("Micaps 4 file error: " + str(err))
+    encodings = ['utf-8', 'gb18030', 'GBK']
+    for encoding in encodings:
+        txt = None
+        try:
+            with open(fname, 'r', encoding=encoding) as f:
+                txt = f.read().replace('\n', ' ').split()
+        except Exception:
+            pass
+    if txt is None:
+        print("Micaps 4 file error: " + fname)
         return None
 
     # head information
@@ -164,11 +366,14 @@ def read_micaps_4(fname, limit=None):
     if hour >= 24:    # some times, micaps file head change the order.
         hour = int(txt[7])
         fhour = int(txt[6])
-
-    time = datetime(year, month, day, hour)
+    fhour = np.array([fhour], dtype=np.float)
+    init_time = datetime(year, month, day, hour)
+    time = init_time + timedelta(hours=fhour[0])
+    init_time = np.array([init_time], dtype='datetime64[ms]')
+    time = np.array([time], dtype='datetime64[ms]')
 
     # vertical level
-    level = float(txt[8])
+    level = np.array([float(txt[8])])
 
     # grid information
     xint = float(txt[9])
@@ -198,40 +403,63 @@ def read_micaps_4(fname, limit=None):
         lat = lat[::-1]
         data = data[::-1, :]
 
-    # create xarray data
-    data = xr.DataArray(data, coords=[lat, lon], dims=['lat', 'lon'])
+    # scale and offset the data, if necessary.
+    if scale_off is not None:
+        data = data * scale_off[0] + scale_off[1]
+
+    # define coordinates
+    time_coord = ('time', time)
+    lon_coord = ('lon', lon, {
+        'long_name':'longitude', 'units':'degrees_east',
+        '_CoordinateAxisType':'Lon', 'axis':'X'})
+    lat_coord = ('lat', lat, {
+        'long_name':'latitude', 'units':'degrees_north',
+        '_CoordinateAxisType':'Lat', 'axis':'Y'})
+    if level[0] != 0:
+        level_coord = ('level', level, levattrs)
+
+    # create xarray dataset
+    if level[0] == 0:
+        data = data[np.newaxis, ...]
+        data = xr.Dataset({
+            varname:(['time', 'lat', 'lon'], data, varattrs)},
+            coords={
+                'time':time_coord, 'lat':lat_coord, 'lon':lon_coord})
+    else:
+        data = data[np.newaxis, np.newaxis, ...]
+        data = xr.Dataset({
+            varname:(['time', 'level', 'lat', 'lon'], data, varattrs)},
+            coords={
+                'time':time_coord, 'level':level_coord, 
+                'lat':lat_coord, 'lon':lon_coord})
+
+    # add time coordinates
+    data.coords['forecast_reference_time'] = init_time[0]
+    data.coords['forecast_period'] = ('time', fhour, {
+        'long_name':'forecast_period', 'units':'hour'})
 
     # subset data
     if limit is not None:
         lat_bnds, lon_bnds = [limit[0], limit[2]], [limit[1], limit[3]]
         data = data.sel(lat=slice(*lat_bnds), lon=slice(*lon_bnds))
 
-    # add attributes
-    data.attrs['time'] = time
-    data.attrs['fhour'] = fhour
-    data.attrs['level'] = level
-    data.attrs['head_info'] = head_info
-    data.attrs['cnInterval'] = cnInterval
-    data.attrs['cnStart'] = cnStart
-    data.attrs['cnEnd'] = cnEnd
-    data.attrs['smoothCeof'] = smoothCeof
-    data.attrs['boldCeof'] = boldCeof
-
     # return
     return data
 
 
-def read_micaps_11(fname, limit=None):
+def read_micaps_5(fname, limit=None):
     """
-    Read Micaps 11 type file (grid u, v vector data)
+    Read Micaps 5 type file (TLOGP observation)
+    
+    Args:
+        fname (str): data filename.
+        limit (list): region limit, [min_lat, min_lon, max_lat, max_lon]
 
-    :param fname: micaps file name.
-    :param limit: region limit, [min_lat, min_lon, max_lat, max_lon]
-    :return: data, xarray type
+    Returns:
+        pandas DataFrame
 
-    :Examples:
-    >>> data = read_micaps_4('Z:/data/newecmwf_grib/pressure/17032008.006')
-
+    Examples:
+    >>> data = read_micaps_5("Z:/data/high/tlogp/20031420.000")
     """
 
     # check file exist
@@ -239,12 +467,200 @@ def read_micaps_11(fname, limit=None):
         return None
 
     # read contents
-    try:
-        with open(fname, 'r') as f:
-            # txt = f.read().decode('GBK').replace('\n', ' ').split()
-            txt = f.read().replace('\n', ' ').split()
-    except IOError as err:
-        print("Micaps 4 file error: " + str(err))
+    encodings = ['utf-8', 'gb18030', 'GBK']
+    for encoding in encodings:
+        txt = None
+        try:
+            with open(fname, 'r', encoding=encoding) as f:
+                txt = f.read().replace('\n', ' ').split()
+        except Exception:
+            pass
+    if txt is None:
+        print("Micaps 1 file error: " + fname)
+        return None
+
+    # head information
+    head_info = txt[2]
+
+    # date and time
+    year = int(txt[3]) if len(txt[3]) == 4 else int(txt[3]) + 2000
+    month = int(txt[4])
+    day = int(txt[5])
+    hour = int(txt[6])
+    time = datetime(year, month, day, hour)
+
+    # number of stations
+    number = int(txt[7])
+
+    # set record column names
+    columns = ['ID', 'lon', 'lat', 'alt', 'pressure', 'height', 'temperature', 'dewpoint',
+               'wind_angle', 'wind_speed']
+
+    # loop every station
+    pid = 8
+    data = []
+    for istn in range(number):
+        ID = txt[pid]
+        lon = float(txt[pid+1])
+        lat = float(txt[pid+2])
+        alt = float(txt[pid+3])
+        length = int(txt[pid+4])
+        pid += 5
+
+        for irec in range(int(length/6)):
+            record = {'ID':ID, 'lon':lon, 'lat':lat, 'alt':alt}
+            record['pressure'] = float(txt[pid])
+            record['height'] = float(txt[pid+1])
+            record['temperature'] = float(txt[pid+2])
+            record['dewpoint'] = float(txt[pid+3])
+            record['wind_angle'] = float(txt[pid+4])
+            record['wind_speed'] = float(txt[pid+5])
+            pid += 6
+            data.append(record)
+
+
+    # initial data
+    data = pd.DataFrame(data)
+
+    # convert column type
+    for column in data.columns:
+        if column == 'ID':
+            continue
+        data[column].mask(data[column] ==  9999.0, inplace=True)
+
+    # cut the region
+    if limit is not None:
+        data = data[(limit[0] <= data['lat']) & (data['lat'] <= limit[2]) &
+                    (limit[1] <= data['lon']) & (data['lon'] <= limit[3])]
+
+    # check records
+    if len(data) == 0:
+        return None
+
+    # add time
+    data['time'] = time
+
+    # return
+    return data
+
+
+def read_micaps_7(fname):
+    """
+    Read Micaps 7 type file (typhoon track record)
+    
+    Args:
+        fname (str): data filename.
+
+    Returns:
+        pandas DataFrame
+
+    Examples:
+    >>> data = read_micaps_7("Z:/data/cyclone/babj/babj2028.dat")
+    """
+
+    # check file exist
+    if not os.path.isfile(fname):
+        return None
+
+    # read contents
+    encodings = ['utf-8', 'gb18030', 'GBK']
+    for encoding in encodings:
+        txt = None
+        try:
+            with open(fname, 'r', encoding=encoding) as f:
+                txt = f.read().replace('\n', ' ').split()
+        except Exception:
+            pass
+    if txt is None:
+        print("Micaps 1 file error: " + fname)
+        return None
+
+    # head information
+    head_info = txt[2]
+
+    # loop every 
+    pid = 3
+    data = []
+    while (pid < len(txt)):
+        # typhoon name
+        name = txt[pid]
+        ID = txt[pid+1]
+        origin = txt[pid+2]
+        number = int(txt[pid+3])
+        pid += 4
+
+        for irec in range(number):
+            record = {'name':name, 'ID':ID, 'origin':origin}
+            year= int(txt[pid])
+            month = int(txt[pid+1])
+            day = int(txt[pid+2])
+            hour = int(txt[pid+3])
+            record['time'] = datetime(year, month, day, hour)
+            record['fhour'] = int(txt[pid+4])
+            record['cent_lon'] = float(txt[pid+5])
+            record['cent_lat'] = float(txt[pid+6])
+            record['max_wind_speed'] = float(txt[pid+7])
+            record['min_pressure'] = float(txt[pid+8])
+            record['radius_wind_7'] = float(txt[pid+9])
+            record['radius_wind_10'] = float(txt[pid+10])
+            record['move_direction'] = float(txt[pid+11])
+            record['move_speed'] = float(txt[pid+12])
+            pid += 13
+            data.append(record)
+
+        # check the end
+        if pid >= len(txt):
+            break
+        else:
+            pid += 1
+
+    # initial data
+    data = pd.DataFrame(data)
+
+    # convert column type
+    for column in data.columns:
+        if column in ['name', 'ID', 'origin']:
+            continue
+        data[column].mask(data[column] ==  9999.0, inplace=True)
+
+    # return
+    return data
+
+
+def read_micaps_8(fname, limit=None):
+    """
+    Read Micaps 8 type file (city forecast)
+
+    数据：
+    区站号  经度  纬度  拔海高度  天气现象1 风向1 风速1  最低温度 最高温度 天气现象2 风向2 风速2
+    注：天气现象、风向、风速均可以有两个值，分别为前后两个预报时段的值。
+
+    Args:
+        fname (str): data filename.
+        limit (list): region limit, [min_lat, min_lon, max_lat, max_lon]
+
+    Returns:
+        pandas DataFrame
+
+    Examples:
+    >>> data = read_micaps_2("Z:/data/high/plot/500/19010108.000")
+    """
+
+    # check file exist
+    if not os.path.isfile(fname):
+        return None
+
+    # read contents
+    encodings = ['utf-8', 'gb18030', 'GBK']
+    for encoding in encodings:
+        txt = None
+        try:
+            with open(fname, 'r', encoding=encoding) as f:
+                txt = f.read().replace('\n', ' ').split()
+        except Exception:
+            pass
+    if txt is None:
+        print("Micaps 1 file error: " + fname)
         return None
 
     # head information
@@ -258,21 +674,118 @@ def read_micaps_11(fname, limit=None):
     time = datetime(year, month, day, hour)
     fhour = int(txt[7])
 
+    # number of stations
+    number = int(txt[8])
+
+    # set record column names
+    columns = ['ID', 'lon', 'lat', 'alt', 'weather_code1', 'wind_angle1', 'wind_speed1',
+               'min_temperature', 'max_temperature', 'weather_code2', 'wind_angle2', 'wind_speed2',]
+
+    # cut the data
+    txt = np.array(txt[9:])
+    txt.shape = [number, 12]
+
+    # initial data
+    data = pd.DataFrame(txt, columns=columns)
+
+    # convert column type
+    for column in data.columns:
+        if column == 'ID':
+            continue
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+        data[column].mask(data[column] ==  9999.0, inplace=True)
+
+    # cut the region
+    if limit is not None:
+        data = data[(limit[0] <= data['lat']) & (data['lat'] <= limit[2]) &
+                    (limit[1] <= data['lon']) & (data['lon'] <= limit[3])]
+
+    # check records
+    if len(data) == 0:
+        return None
+
+    # add time
+    data['time'] = time
+    data['fhour'] = fhour
+
+    # return
+    return data
+
+
+def read_micaps_11(fname, limit=None, scale_off=None, no_level=False,
+                   levattrs={'long_name':'pressure_level', 'units':'hPa', '_CoordinateAxisType':'Pressure'}):
+    """
+    Read Micaps 11 type file (grid u, v vector data)
+
+    :param fname: micaps file name.
+    :param limit: region limit, [min_lat, min_lon, max_lat, max_lon]
+    :param scale_off: [scale, offset], return values = values*scale + offset.
+    :param no_level: sometimes, there is no level information in the file, so just ignore.
+    :param levattrs: set level coordinate attributes, diectionary type.
+    :return: data, xarray type
+
+    :Examples:
+    >>> data = read_micaps_4('Z:/data/newecmwf_grib/stream/850/17032008.006')
+
+    """
+
+    # check file exist
+    if not os.path.isfile(fname):
+        return None
+
+    # read contents
+    encodings = ['utf-8', 'gb18030', 'GBK']
+    for encoding in encodings:
+        txt = None
+        try:
+            with open(fname, 'r', encoding=encoding) as f:
+                txt = f.read().replace('\n', ' ').split()
+        except Exception:
+            pass
+    if txt is None:
+        print("Micaps 11 file error: " + fname)
+        return None
+
+    # head information
+    head_info = txt[2]
+
+    # date and time
+    year = int(txt[3]) if len(txt[3]) == 4 else int(txt[3]) + 2000
+    month = int(txt[4])
+    day = int(txt[5])
+    hour = int(txt[6])
+    fhour = np.array([int(txt[7])], dtype=np.float)
+    init_time = datetime(year, month, day, hour)
+    time = init_time + timedelta(hours=fhour[0])
+    init_time = np.array([init_time], dtype='datetime64[ms]')
+    time = np.array([time], dtype='datetime64[ms]')
+
     # vertical level
-    level = float(txt[8])
+    if no_level:
+        level = np.array([0.0])
+        ind = 8
+    else:
+        level = np.array([float(txt[8])])
+        ind=9
 
     # grid information
-    xint = float(txt[9])
-    yint = float(txt[10])
-    slon = float(txt[11])
-    slat = float(txt[13])
-    nlon = int(txt[15])
-    nlat = int(txt[16])
+    xint = float(txt[ind])
+    ind += 1
+    yint = float(txt[ind])
+    ind += 1
+    slon = float(txt[ind])
+    ind += 2
+    slat = float(txt[ind])
+    ind += 2
+    nlon = int(txt[ind])
+    ind += 1
+    nlat = int(txt[ind])
+    ind += 1
     lon = slon + np.arange(nlon) * xint
     lat = slat + np.arange(nlat) * yint
 
     # extract data
-    data = (np.array(txt[17:])).astype(np.float)
+    data = (np.array(txt[ind:])).astype(np.float)
     data.shape = [2, nlat, nlon]
 
     # check latitude order
@@ -280,26 +793,56 @@ def read_micaps_11(fname, limit=None):
         lat = lat[::-1]
         data = data[:, ::-1, :]
 
+    # scale and offset the data, if necessary.
+    if scale_off is not None:
+        data = data * scale_off[0] + scale_off[1]
+
+    # define coordinates
+    time_coord = ('time', time)
+    lon_coord = ('lon', lon, {
+        'long_name':'longitude', 'units':'degrees_east',
+        '_CoordinateAxisType':'Lon', 'axis':'X'})
+    lat_coord = ('lat', lat, {
+        'long_name':'latitude', 'units':'degrees_north',
+        '_CoordinateAxisType':'Lat', 'axis':'Y'})
+    if level[0] != 0:
+        level_coord = ('level', level, levattrs)
+
     # create xarray data
     uwind = np.squeeze(data[0, :, :])
     vwind = np.squeeze(data[1, :, :])
     speed = np.sqrt(uwind*uwind + vwind*vwind)
-    data = xr.Dataset({
-        'uwind': (['lat', 'lon'], uwind),
-        'vwind': (['lat', 'lon'], vwind),
-        'speed': (['lat', 'lon'], speed)},
-        coords={'lat':lat, 'lon':lon})
+    # create xarray dataset
+    if level[0] == 0:
+        uwind = uwind[np.newaxis, ...]
+        vwind = vwind[np.newaxis, ...]
+        speed = speed[np.newaxis, ...]
+        data = xr.Dataset({
+            'uwind':(['time', 'lat', 'lon'], uwind, {"long_name":"u-component of wind", "units":"m/s"}),
+            'vwind':(['time', 'lat', 'lon'], vwind, {"long_name":"v-component of wind", "units":"m/s"}),
+            'speed':(['time', 'lat', 'lon'], speed, {"long_name":"wind speed", "units":"m/s"})},
+            coords={
+                'time':time_coord, 'lat':lat_coord, 'lon':lon_coord})
+    else:
+        uwind = uwind[np.newaxis, np.newaxis, ...]
+        vwind = vwind[np.newaxis, np.newaxis, ...]
+        speed = speed[np.newaxis, np.newaxis, ...]
+        data = xr.Dataset({
+            'uwind':(['time', 'level', 'lat', 'lon'], uwind, {"long_name":"u-component of wind", "units":"m/s"}),
+            'vwind':(['time', 'level', 'lat', 'lon'], vwind, {"long_name":"v-component of wind", "units":"m/s"}),
+            'speed':(['time', 'level', 'lat', 'lon'], speed, {"long_name":"wind speed", "units":"m/s"})},
+            coords={
+                'time':time_coord, 'level':level_coord, 'lat':lat_coord, 'lon':lon_coord})
+
+    # add time coordinates
+    data.coords['forecast_reference_time'] = init_time[0]
+    data.coords['forecast_period'] = ('time', fhour, {
+        'long_name':'forecast_period', 'units':'hour'})
 
     # subset data
     if limit is not None:
         lat_bnds, lon_bnds = [limit[0], limit[2]], [limit[1], limit[3]]
         data = data.sel(lat=slice(*lat_bnds), lon=slice(*lon_bnds))
-
-    # add attributes
-    data.attrs['time'] = time
-    data.attrs['fhour'] = fhour
-    data.attrs['level'] = level
-    data.attrs['head_info'] = head_info
 
     # return
     return data
@@ -322,11 +865,16 @@ def read_micaps_14(fname):
         return None
 
     # read contents
-    try:
-        with open(fname, 'r') as f:
-            txt = f.read().replace('\n', ' ').split()
-    except IOError as err:
-        print("Micaps 14 file error: " + str(err))
+    encodings = ['utf-8', 'gb18030', 'GBK']
+    for encoding in encodings:
+        txt = None
+        try:
+            with open(fname, 'r', encoding=encoding) as f:
+                txt = f.read().replace('\n', ' ').split()
+        except Exception:
+            pass
+    if txt is None:
+        print("Micaps 14 file error: " + fname)
         return None
 
     # head information
@@ -935,3 +1483,79 @@ def read_micaps_14(fname):
             "notes_symbol": notes_symbol,
             "plines_symbol": plines_symbol}
 
+
+def read_micaps_120(fname, limit=None):
+    """
+    Read Micaps 120 type file (Air quantity observation)
+    
+    Args:
+        fname (str): data filename.
+        limit (list): region limit, [min_lat, min_lon, max_lat, max_lon]
+
+    Returns:
+        pandas DataFrame
+
+    Examples:
+    >>> data = read_micaps_120("./2020031500.000")
+    """
+
+    # check file exist
+    if not os.path.isfile(fname):
+        return None
+
+    # read contents
+    encodings = ['utf-8', 'gb18030', 'GBK']
+    for encoding in encodings:
+        txt = None
+        try:
+            with open(fname, 'r', encoding=encoding) as f:
+                txt = f.read().replace('\n', ' ').split()
+        except Exception:
+            pass
+    if txt is None:
+        print("Micaps 1 file error: " + fname)
+        return None
+
+    # head information
+    head_info = txt[2]
+
+    # extract the time information from head info
+    time_str = head_info.split('_')[1]
+    try:
+        time = datetime.strptime(time_str, '%Y%m%d%H')
+    except:
+        print("Can not extract time information from "+head_info)
+        return None
+
+    # set record column names
+    columns = ['ID', 'lat', 'lon', 'AQI', 'AQI_grade', 'PM2p5_1h', 'PM10_1h', 'CO_1h',
+               'NO2_1h', 'O3_1h', 'O3_8h', 'SO2_1h']
+
+    # cut the data
+    txt = np.array(txt[3:])
+    txt.shape = [-1, 12]
+
+    # initial data
+    data = pd.DataFrame(txt, columns=columns)
+
+    # convert column type
+    for column in data.columns:
+        if column == 'ID':
+            continue
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+        data[column].mask(data[column] ==  9999.0, inplace=True)
+
+    # cut the region
+    if limit is not None:
+        data = data[(limit[0] <= data['lat']) & (data['lat'] <= limit[2]) &
+                    (limit[1] <= data['lon']) & (data['lon'] <= limit[3])]
+
+    # check records
+    if len(data) == 0:
+        return None
+
+    # add time
+    data['time'] = time
+
+    # return
+    return data
