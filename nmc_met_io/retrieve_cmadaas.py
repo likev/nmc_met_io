@@ -2240,8 +2240,8 @@ def get_tlogp_metradar(tlogp_ids, timelist, path_tlogp,
     下载秒探空数据,用于metradar工具包的风场反演
 
     Args:
-        tlogp_ids (list): 秒探空站点ID列表
-        timelist (list): 时间列表，不是范围，而是时刻，格式['YYYYMMDDHH','YYYYMMDDHH']
+        tlogp_ids (list): 秒探空站点ID列表, 如['54511','5805440316']
+        timelist (list): 时间列表，不是范围，而是时刻，格式['YYYYMMDDHHMMSS','YYYYMMDDHHMMSS']
         path_tlogp (str): 保存路径
         data_code_tlogp (str, optional): 数据集代码. Defaults to "UPAR_CHN_MUL_FTM".
         interface_id_tlogp (str, optional): 接口ID. Defaults to "getUparEleByTimeAndStaID".
