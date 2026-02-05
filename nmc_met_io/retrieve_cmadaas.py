@@ -2231,7 +2231,144 @@ def cmadaas_sounding_by_time_and_id(
     # return
     return data
 
+# 下载秒探空数据,用于metradar工具包的风场反演, by朱文剑
+def get_tlogp_metradar(tlogp_ids, timelist, path_tlogp, 
+                       data_code_tlogp="UPAR_CHN_MUL_FTM",
+                       elements_tlogp="Station_Id_C,Lat,Lon,Alti,PRS_HWC,GPH,WIN_D,WIN_S,TEM,DPT",
+                       save_format_tlogp='sharppy'):
+    """
+    下载秒探空数据,用于metradar工具包的风场反演
 
+    Args:
+        tlogp_ids (list): 秒探空站点ID列表, 如['54511','5805440316']
+        timelist (list): 时间列表，不是范围，而是时刻，格式['YYYYMMDDHHMMSS','YYYYMMDDHHMMSS']
+        path_tlogp (str): 保存路径
+        data_code_tlogp (str, optional): 数据集代码. Defaults to "UPAR_CHN_MUL_FTM".
+        interface_id_tlogp (str, optional): 接口ID. Defaults to "getUparEleByTimeAndStaID".
+        elements_tlogp (str, optional): 要素列表. Defaults to "Station_Name,Station_Id_C,Lat,Lon,Alti,Year,Mon,Day,Hour,Min,Second,PRS_HWC,GPH,TEM,DPT,WIN_D,WIN_S".
+        save_format_tlogp (str, optional): 保存格式，'sharppy'或'micaps'. Defaults to 'sharppy'.
+    """
+
+    interface_id_tlogp = "getUparEleByTimeAndStaID"
+    for tlogp_id in tlogp_ids:
+        for timestr in timelist:
+            curtime = datetime.strptime(timestr, '%Y%m%d%H%M%S')
+            print('Retrieving tlogp data for time: ' + curtime.strftime('%Y-%m-%d %H:%M:%S') + ' Station: ' + tlogp_id)
+            params = {'dataCode': data_code_tlogp,
+                    'elements': elements_tlogp,
+                    'times': timestr,
+                    'staids': tlogp_id,
+                    }
+            contents = get_rest_result(interface_id_tlogp, params, data_format='json')
+            if contents == None:
+                print('No Valid data for tlogp: ' + timestr + ' ' + tlogp_id)
+                continue
+            json_dic1 = _load_contents(contents)
+            # json_dic1 = js.loads(contents)
+            if not json_dic1 is None:
+                if json_dic1['returnCode'] == '0':
+                    if 'DS' in json_dic1:
+                        dd = json_dic1['DS']
+                        
+                        if save_format_tlogp == 'sharppy':
+                            # 保存为sharppy格式
+                            repd = pd.DataFrame.from_dict(dd)
+                            repd[repd=='999999']=np.nan
+                            repd[repd=='999998']=np.nan
+                            
+                            repd.dropna(subset='PRS_HWC',inplace=True)
+                            repd.dropna(subset='DPT',inplace=True)
+                            repd.dropna(subset='WIN_D',inplace=True)
+                            repd.dropna(subset='WIN_S',inplace=True)
+                            repd['PRS_HWC'] = repd['PRS_HWC'].astype(float)
+                            repd['GPH'] = repd['GPH'].astype(float)
+                            repd['TEM'] = repd['TEM'].astype(float)
+                            repd['DPT'] = repd['DPT'].astype(float)
+                            repd['WIN_D'] = repd['WIN_D'].astype(float)
+                            repd['WIN_S'] = repd['WIN_S'].astype(float)
+                            repd.sort_values(by='PRS_HWC',inplace=True,ascending=False)
+                            #删除重复的行，只保留一次出现的（从时间上来看最近的）
+                            repd.drop_duplicates(subset=['PRS_HWC'], keep='first',inplace=True)
+                            
+                            if not os.path.exists(path_tlogp + os.sep + tlogp_id):
+                                os.makedirs(path_tlogp + os.sep + tlogp_id )
+                                
+                            outname = curtime.strftime('%y%m%d%H') + '.' + tlogp_id
+                            # 输出为sharppy的数据格式
+                            print('Save as sharppy file ......')
+                            outpath_sharppy = path_tlogp + os.sep + 'sharppy'
+                            if not os.path.exists(outpath_sharppy):
+                                os.makedirs(outpath_sharppy)
+
+                            fout = open(outpath_sharppy + os.sep + outname,'w')
+                            fout.write('%TITLE%\n')
+                            fout.write(tlogp_id + '   ' + outname[0:6] + r'/' + outname[6:8] + '00\n')
+    
+                            fout.write('%s    %s\n'%(repd['Lon'].iloc[0],repd['Lat'].iloc[0]))
+                            fout.write('   LEVEL       HGHT       TEMP       DWPT       WDIR       WSPD\n')
+                            fout.write('-----------------------------------------------------------------\n')
+                            fout.write('%RAW%\n')
+                            for it in np.arange(0,len(repd['PRS_HWC'])):
+                                fout.write('%8.2f'%repd['PRS_HWC'].iloc[it] + ',' + 
+                                        '%10.2f'%repd['GPH'].iloc[it] + ',' + 
+                                        '%10.2f'%repd['TEM'].iloc[it] + ',' + 
+                                        '%10.2f'%repd['DPT'].iloc[it] + ',' + 
+                                        '%10.2f'%repd['WIN_D'].iloc[it] + ',' + 
+                                        '%10.2f'%(repd['WIN_S'].iloc[it]*1.94) + '\n')
+                            fout.write('%END%\n')
+                            fout.close() 
+                            print(outpath_sharppy+ os.sep + outname + ' done!')
+                        elif save_format_tlogp == 'micaps': # 保存为micaps第5类数据
+                            # 将curtime的时间改为北京时间
+                            bjtime = curtime + timedelta(hours=8)
+                        
+                            repd = pd.DataFrame.from_dict(dd)
+                            # 将repd里面所有的999999和999998替换为9999
+                            repd.replace('999999', 9999, inplace=True)
+                            repd.replace('999998', 9999, inplace=True)
+                            
+                            repd['PRS_HWC'] = repd['PRS_HWC'].astype(float)
+                            repd['Alti'] = repd['Alti'].astype(float)
+                            repd['GPH'] = repd['GPH'].astype(float)
+                            repd['TEM'] = repd['TEM'].astype(float)
+                            repd['DPT'] = repd['DPT'].astype(float)
+                            repd['WIN_D'] = repd['WIN_D'].astype(float)
+                            repd['WIN_S'] = repd['WIN_S'].astype(float)
+                            repd.sort_values(by='PRS_HWC',inplace=True,ascending=False)
+                            #删除重复的行，只保留一次出现的（从时间上来看最近的）
+                            repd.drop_duplicates(subset=['PRS_HWC'], keep='first',inplace=True)
+                            
+                            outname = 'TLOGP_' + tlogp_id + '_' + bjtime.strftime('%Y%m%d%H') + '00.000'
+                            outpath_micaps = path_tlogp + '/micaps5'
+                            if not os.path.exists(outpath_micaps):
+                                os.makedirs(outpath_micaps)
+                            fout = open(outpath_micaps + os.sep + outname,'w',encoding='gb18030')
+                            # 输出为micaps第5类数据格式
+                            print('Save as micaps type5 file ......')
+                            fout.write('diamond 5 ' + bjtime.strftime('%y年%m月%d日%H时') + '温度对数压力图\n')
+                            fout.write(bjtime.strftime('%y\t%m\t%d\t%H') + '\t1' + '\n')
+                            
+                            fout.write('%6s\t'%tlogp_id +
+                                        '%s\t'%repd['Lon'].iloc[0] +
+                                        '%s\t'%repd['Lat'].iloc[0] +
+                                        '%s\t'%repd['Alti'].iloc[0] +
+                                        '%d\t'%(len(repd['PRS_HWC'])*6) ) # 每层6个数据
+                            fout.write('\n')
+                            
+                            for it in np.arange(0,len(repd['PRS_HWC'])):
+                                fout.write('%d\t'%repd['PRS_HWC'].iloc[it] + 
+                                            '%d\t'%repd['GPH'].iloc[it] +
+                                            '%d\t'%repd['TEM'].iloc[it] +
+                                            '%d\t'%repd['DPT'].iloc[it] +
+                                            '%d\t'%repd['WIN_D'].iloc[it] +
+                                            '%d\t'%(repd['WIN_S'].iloc[it]) + '\n')
+                            fout.close()
+                            print(outpath_micaps + os.sep + outname + ' done!')
+                        
+                        
+            else:
+                print('No Valid data for tlogp: ' + timestr + ' ' + tlogp_id)
+                
 def cmadaas_sounding_in_rect_by_time_range(
         time_range, limit=[3.51, 73.33, 53.33, 135.05], data_code="UPAR_CHN_MUL_FTM",
         ranges=None, order=None, count=None, trans_type=True,
